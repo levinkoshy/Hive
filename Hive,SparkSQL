@@ -1,0 +1,183 @@
+create database levinkoshy_retail_db_txt;
+
+use levinkoshy_retail_db_txt;
+
+set hive.metastore.warehouse.dir;
+
+//setting the hdfs directory for all the hive tables (/apps/hive/warehouse)
+//can be found in etc/hive/conf
+
+dfs -ls /apps/hive/warehouse/levinkoshy_retail_db_txt.db;
+
+create table orders(
+order_id int,
+order_date string,
+order_customer_id int,
+order_status string
+) row format delimited fields terminated by ','
+stored as textfile;
+
+//stored as textfile is a default property
+
+//load-can be used whenever the data is pre-formatted as per the syntax of the table
+
+load data local inpath '/data/retail_db/orders' into table orders
+//append
+//OVERWRITE into - delete and insert
+
+create table order_items(
+order_item_id int,
+order_item_order_id int,
+order_item_product_id int,
+order_item_quantity int,
+order_item_subtotal float,
+order_item_product_price float
+) row format delimited fields terminated by ','
+stored as textfile;
+
+load data local inpath '/data/retail_db/order_items' OVERWRITE into table order_items;
+
+select * from order_items limit 10;
+
+//orc
+create database levinkoshy_retail_db_orc;
+use levinkoshy_retail_db_orc;
+
+//file formats other than textfile stores metadata and data; so delimiter is not required 
+
+create table orders(
+order_id int,
+order_date string,
+order_customer_id int,
+order_status string
+) stored as orc;
+
+describe orders;
+describe formatted orders;
+
+create table order_items(
+order_item_id int,
+order_item_order_id int,
+order_item_product_id int,
+order_item_quantity int,
+order_item_subtotal float,
+order_item_product_price float
+) stored as orc;
+
+dfs -ls  hdfs://nn01.itversity.com:8020/apps/hive/warehouse/levinkoshy_retail_db_orc.db/orders;
+
+insert into table orders select * from levinkoshy_retail_db_txt.orders;
+
+insert into table order_items select * from levinkoshy_retail_db_txt.order_items;
+
+
+///Running the same queries in spark shell
+spark-shell --master yarn \
+   --conf spark.ui.port=12654 \
+
+sqlContext.sql("use levinkoshy_retail_db_txt")
+
+//sqlContext connects to the hive database
+sqlContext.sql("show tables").show
+sqlContext.sql("select * from orders limit 10").show
+
+//hive
+show functions;
+
+describe function length;
+
+select length('Hello World')
+select length(order_status) from orders;
+
+create table customers (
+customer_id int,
+customer_fname varchar(45),
+customer_lname varchar(45),
+customer_email varchar(45),
+customer_password varchar(45),
+customer_street varchar(255),
+customer_city varchar(45),
+customer_state varchar(45),
+customer_zipcode varchar(45)
+) row format delimited fields terminated by ','
+stored as textfile;
+
+load data local inpath '/data/retail_db/customers' into table customers;
+
+substr or substring --index starts with 1 unlike RDDs
+(string,position) or 
+(string,position,length of the substring required)
+instr
+like
+rlike
+length
+lcase or lower
+ucase or upper
+initcap
+trim,ltrim,rtrim
+cast
+lpad,rpad
+
+case
+nvl
+
+select case order_status 
+ when 'CANCELED' then 'Attention' 
+ else 'Okay' 
+ end 
+ from orders ;
+//or and and doesnt work
+
+ select order_status, count(1) as count from orders group by order_status;
+
+ //Over partition by
+ //when you have to get an individual percentage of a record within an order_id
+
+ select o.order_id, o.order_date, o.order_status, oi.order_item_subtotal,
+ round(sum(oi.order_item_subtotal) over (partition by o.order_id),2) order_revenue,
+ oi.order_item_subtotal/(round(sum(oi.order_item_subtotal) over (partition by o.order_id),2)) pct_revenue
+ from orders o join order_items oi
+ on o.order_id = oi.order_item_order_id
+ where o.order_status in ('COMPLETE', 'CLOSED')
+ order by o.order_date, order_revenue desc;
+
+ //For adding filter condition
+ select * from (
+ select o.order_id, o.order_date, o.order_status, oi.order_item_subtotal,
+ round(sum(oi.order_item_subtotal) over (partition by o.order_id),2) order_revenue,
+ oi.order_item_subtotal/(round(sum(oi.order_item_subtotal) over (partition by o.order_id),2)) pct_revenue
+ from orders o join order_items oi
+ on o.order_id = oi.order_item_order_id
+ where o.order_status in ('COMPLETE', 'CLOSED')) Nested
+ where order_revenue >= 1000 
+ order by order_date, order_revenue desc;
+
+ //adding average
+ select * from (
+ select o.order_id, o.order_date, o.order_status, oi.order_item_subtotal,
+ round(sum(oi.order_item_subtotal) over (partition by o.order_id),2) order_revenue,
+ oi.order_item_subtotal/(round(sum(oi.order_item_subtotal) over (partition by o.order_id),2)) pct_revenue,
+ round(avg(oi.order_item_subtotal) over (partition by o.order_id),2) avg_revenue
+ from orders o join order_items oi
+ on o.order_id = oi.order_item_order_id
+ where o.order_status in ('COMPLETE', 'CLOSED')) Nested
+ where order_revenue >= 1000 
+ order by order_date, order_revenue desc;
+
+
+ //Analytics functions
+ select * from (
+ select o.order_id, o.order_date, o.order_status, oi.order_item_subtotal,
+ round(sum(oi.order_item_subtotal) over (partition by o.order_id),2) order_revenue,
+ oi.order_item_subtotal/(round(sum(oi.order_item_subtotal) over (partition by o.order_id),2)) pct_revenue,
+ round(avg(oi.order_item_subtotal) over (partition by o.order_id),2) avg_revenue,
+ rank() over (partition by order_id order by oi.order_item_subtotal desc) rnk_revenue,
+ dense_rank() over (partition by order_id order by oi.order_item_subtotal desc) dns_rnk_revenue,
+ percent_rank() over (partition by order_id order by oi.order_item_subtotal desc) percent_rnk_revenue,
+ row_number() over (partition by order_id order by oi.order_item_subtotal desc) rn_orderby_revenue,
+ row_number() over (partition by order_id) rn
+ from orders o join order_items oi
+ on o.order_id = oi.order_item_order_id
+ where o.order_status in ('COMPLETE', 'CLOSED')) Nested
+ where order_revenue >= 1000 
+ order by order_date, order_revenue desc, rnk_revenue;
